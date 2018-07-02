@@ -1,4 +1,4 @@
-package tools
+package zredis
 
 import (
 	"bufio"
@@ -11,9 +11,41 @@ type Resp struct {
 	Val      interface{}
 }
 
+func (r *Resp) String() (string) {
+	switch rsp := r.Val.(type) {
+	case string:
+		return rsp
+	case []byte:
+		return string(rsp)
+	case int:
+		return strconv.Itoa(rsp)
+	case float64:
+		return string(strconv.AppendFloat(buffer[:0], rsp, 'g', -1, 64))
+	default:
+		return TypeException
+
+	}
+
+}
+
+func (r *Resp) Btyes() ([]byte) {
+	switch rsp := r.Val.(type) {
+	case string:
+		return []byte(rsp)
+	case []byte:
+		return rsp
+	case int:
+		return strconv.AppendInt(convertBuf[:0], int64(rsp), 10)
+	case float64:
+		return strconv.AppendFloat(buffer[:0], rsp, 'g', -1, 64)
+	default:
+		return []byte(TypeException)
+
+	}
+}
+
 func Response(r *bufio.Reader) (*Resp, error) {
 	peek, err := r.Peek(2)
-
 	if err != nil {
 		return &Resp{0, nil}, err
 	}
@@ -47,7 +79,7 @@ func ErrorReply(r *bufio.Reader) (*Resp, error) {
 	if err != nil {
 		return &Resp{2, nil}, err
 	}
-	return &Resp{2, string(str[1:])}, nil
+	return &Resp{2, str[1:]}, nil
 }
 
 func IntegerReply(r *bufio.Reader) (*Resp, error) {
@@ -118,5 +150,5 @@ func ArrayReply(r *bufio.Reader) (*Resp, error) {
 	if size <= 0 {
 		return &Resp{5, nil}, errors.New("read to bite is 0")
 	}
-   return &Resp{5,nil},nil
+	return &Resp{5, nil}, nil
 }

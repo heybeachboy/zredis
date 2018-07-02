@@ -1,4 +1,4 @@
-package tools
+package zredis
 
 import (
 	"net"
@@ -7,7 +7,8 @@ import (
 	"sync"
 	"strconv"
 	"fmt"
-)
+	//"errors"
+	)
 
 var (
 	delimiter = []byte{'\r', '\n'}
@@ -31,6 +32,8 @@ type RedisClient struct {
 	WriteBuffer  *bufio.Writer
 	ReadTimeOut  time.Duration
 	ReadBuffer   *bufio.Reader
+	Id           int
+	pending      byte
 }
 
 type options struct {
@@ -97,6 +100,7 @@ func DialRedis(network, addr string, ops ...SetAttr) (*RedisClient, error) {
 
 	if op.password != "" {
 
+
 	}
 
 	if op.keepAlive > 0 {
@@ -115,13 +119,31 @@ func DialRedis(network, addr string, ops ...SetAttr) (*RedisClient, error) {
 	}, nil
 }
 
-func (c *RedisClient) SetString(key, value string, expire int64) {
+func NewConnection(network, addr string) (*RedisClient, error) {
+	return DialRedis(network,addr)
+}
+
+func (c *RedisClient) SetString(key, value string, expire int64) (*Resp, error) {
+
 	if expire != 0 {
-		c.writeInterface("SET", key, value, "EX", expire)
+		return c.writeInterface("SET", key, value, "EX", expire)
 	} else {
-		c.writeInterface("SET", key, value)
+
+		return c.writeInterface("SET", key, value)
 	}
 
+
+}
+
+func (c *RedisClient) GetString(key string) (string, error) {
+	resp, err := c.writeInterface("GET", key)
+	return resp.String(),err
+
+}
+
+func (c *RedisClient) PushList(name string,args... interface{})(error) {
+	_, err := c.writeInterface("LPUSH",args)
+	return err
 }
 
 func resetBuffer() {
@@ -138,34 +160,55 @@ func (c *RedisClient) writeHeadFlag(prefix byte, size int) {
 
 }
 
-func (c *RedisClient) writeInterface(args ...interface{}) (error) {
+func (c *RedisClient) writeInterface(args ...interface{}) (*Resp, error) {
 	c.writeHeadFlag(responseLinePrefix, len(args))
 	for _, arg := range args {
 		c.argOperation(arg)
 	}
-	_, err := c.WriteBuffer.Write(buffer)
+	  if c.WriteTimeOut > 0 {
+	  	c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeOut))
+	  }
+	  _, err := c.WriteBuffer.Write(buffer)
+
+	//if n != len(buffer) {
+	//	return &Resp{0,nil}, errors.New("write data size error")
+
+	//}
 
 	if err != nil {
-		return err
+		return &Resp{0, nil}, err
 	}
-	fmt.Println("write:", string(buffer))
+	//fmt.Println("write:", string(buffer))
+	//c.syn.Lock()
 	err2 := c.WriteBuffer.Flush()
+	//c.syn.Unlock()
 	if err2 != nil {
-		return err2
+		return &Resp{0, nil}, err2
+	}
+
+	if c.ReadTimeOut > 0 {
+		c.Conn.SetReadDeadline(time.Now().Add(c.ReadTimeOut))
 	}
 	resp, err := Response(c.ReadBuffer)
 
-	if err != nil {
-		return err
-	}
-
-	fmt.Println("reply:", resp.Val)
-	return nil
+	return resp, err
 
 }
 
-func (c *RedisClient) Cmd(args ...interface{}) {
-	c.writeInterface(args...)
+func (c *RedisClient) Ping() (bool) {
+	resp, _ := c.writeInterface("PING")
+	if resp.RespType == 1 {
+		return true
+	}
+	return false
+}
+
+func (c *RedisClient) Close() {
+	 c.Conn.Close()
+}
+
+func (c *RedisClient) Cmd(args ...interface{}) (*Resp, error) {
+	return c.writeInterface(args...)
 }
 
 func resetReadBuf() {
@@ -174,11 +217,6 @@ func resetReadBuf() {
 	}
 }
 
-func (c *RedisClient) readResponse() (error) {
-	resp, err := c.ReadBuffer.ReadBytes(end)
-	fmt.Println("resp:", string(resp))
-	return err
-}
 
 func (c *RedisClient) argOperation(arg interface{}) {
 	switch arg := arg.(type) {
@@ -201,6 +239,9 @@ func (c *RedisClient) argOperation(arg interface{}) {
 
 	case nil:
 		c.writeString("")
+	case interface{}:
+
+
 	default:
 		fmt.Println("exception status:", arg)
 	}
@@ -245,8 +286,4 @@ func (c *RedisClient) writeFloat64(arg float64) {
 	writeLength(responseBlockPrefix, len(bytes))
 	buffer = append(buffer, bytes...)
 	writeEndFlag()
-}
-
-func (c *RedisClient) GetString(key string) (string) {
-	return ""
 }
