@@ -7,6 +7,8 @@ import (
 
 var DieClient = make(chan *RedisClient)
 var pMapKey = make(chan *RedisClient)
+var cli *RedisClient
+var e   error
 
 type Pool struct {
 	network string
@@ -18,10 +20,8 @@ type Pool struct {
 }
 
 func NewRedisPool(network, addr string, Size int) (*Pool) {
-	network = network
-	address = addr
-	pool := &Pool{Clients: make(chan *RedisClient, Size), Size: Size}
-	pool.initPool()
+	pool := &Pool{network: network, addr: addr, Clients: make(chan *RedisClient, Size), Size: Size}
+	pool.InitPool()
 	return pool
 }
 
@@ -29,13 +29,18 @@ func (p *Pool) InitPool() {
 	currentSize := len(p.Clients)
 
 	for i := 0; i < (p.Size - currentSize); i++ {
-		c, err := DialRedis(p.network, p.addr)
-		if err != nil {
-			fmt.Println("redis connection erro :", err)
+		cli, e = DialRedis(p.network, p.addr)
+		if e != nil {
+			fmt.Println("redis connection erro :", e)
 			break
 		}
-		p.Clients <- c
+		cli.Id = i
+		p.Clients <- cli
 	}
+}
+
+func (p *Pool) IdieSize() (int) {
+	return len(p.Clients)
 }
 
 func (p *Pool) GetOneRedisConn() (*RedisClient) {
@@ -48,13 +53,21 @@ func (p *Pool) GetOneRedisConn() (*RedisClient) {
 			}
 			return c
 		default:
-			p.InitPool()
+
+			if len(p.Clients) == 0 {
+				p.InitPool()
+			}
 			continue
 		}
 	}
 }
 
 func (p *Pool) ReturnPool(c *RedisClient) {
-	p.Clients <- c
-	return
+
+	if p.IdieSize() < p.Size{
+		 p.Clients <- c
+		 return
+	 }
+	 c.Close()
+	 return
 }

@@ -28,6 +28,7 @@ var (
 type RedisClient struct {
 	Conn         net.Conn
 	syn          sync.Mutex
+	buffer       []byte
 	WriteTimeOut time.Duration
 	WriteBuffer  *bufio.Writer
 	ReadTimeOut  time.Duration
@@ -98,25 +99,29 @@ func DialRedis(network, addr string, ops ...SetAttr) (*RedisClient, error) {
 		return nil, err
 	}
 
-	if op.password != "" {
-
-
-	}
-
-	if op.keepAlive > 0 {
-
-	}
-
-	if op.db > 0 {
-
-	}
-
-	return &RedisClient{Conn: conn,
+	cli := &RedisClient{Conn: conn,
 		WriteTimeOut: op.wTimeOut,
 		WriteBuffer: bufio.NewWriter(conn),
 		ReadTimeOut: op.rTimeOut,
 		ReadBuffer: bufio.NewReader(conn),
-	}, nil
+	}
+
+	if op.password != "" {
+		_, err := cli.Cmd("AUTH", op.password)
+
+		if err != nil {
+			return nil, err
+		}
+
+	}
+
+	if op.db > 0 {
+		_, err := cli.Cmd("SELECT", op.db)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return cli, nil
 }
 
 func NewConnection(network, addr string) (*RedisClient, error) {
@@ -146,17 +151,17 @@ func (c *RedisClient) PushList(name string,args... interface{})(error) {
 	return err
 }
 
-func resetBuffer() {
-	if len(buffer) != 0 {
-		buffer = buffer[:0]
+func (c *RedisClient)resetBuffer() {
+	if len(c.buffer) != 0 {
+		c.buffer = c.buffer[:0]
 	}
 }
 
 func (c *RedisClient) writeHeadFlag(prefix byte, size int) {
-	resetBuffer()
-	buffer = append(buffer, prefix)
-	buffer = append(buffer, strconv.AppendInt(convertBuf[:0], int64(size), 10)...)
-	buffer = append(buffer, delimiter...)
+	c.resetBuffer()
+	c.buffer = append(c.buffer, prefix)
+	c.buffer = append(c.buffer, strconv.AppendInt(convertBuf[:0], int64(size), 10)...)
+	c.buffer = append(c.buffer, delimiter...)
 
 }
 
@@ -168,18 +173,13 @@ func (c *RedisClient) writeInterface(args ...interface{}) (*Resp, error) {
 	  if c.WriteTimeOut > 0 {
 	  	c.Conn.SetWriteDeadline(time.Now().Add(c.WriteTimeOut))
 	  }
-	  _, err := c.WriteBuffer.Write(buffer)
+	  _, err := c.WriteBuffer.Write(c.buffer)
 
-	//if n != len(buffer) {
-	//	return &Resp{0,nil}, errors.New("write data size error")
 
-	//}
-
-	if err != nil {
+	  if err != nil {
 		return &Resp{0, nil}, err
 	}
-	//fmt.Println("write:", string(buffer))
-	//c.syn.Lock()
+
 	err2 := c.WriteBuffer.Flush()
 	//c.syn.Unlock()
 	if err2 != nil {
@@ -248,42 +248,42 @@ func (c *RedisClient) argOperation(arg interface{}) {
 }
 
 func (c *RedisClient) writeByte(arg []byte) {
-	writeLength(responseBlockPrefix, len(arg))
-	buffer = append(buffer, arg...)
-	writeEndFlag()
+	c.writeLength(responseBlockPrefix, len(arg))
+	c.buffer = append(c.buffer, arg...)
+	c.writeEndFlag()
 }
 
-func writeLength(prefix byte, n int) {
-	buffer = append(buffer, responseBlockPrefix)
-	buffer = append(buffer, strconv.AppendInt(convertBuf[:0], int64(n), 10)...)
-	writeEndFlag()
+func (c *RedisClient)writeLength(prefix byte, n int) {
+	c.buffer = append(c.buffer, responseBlockPrefix)
+	c.buffer = append(c.buffer, strconv.AppendInt(convertBuf[:0], int64(n), 10)...)
+	c.writeEndFlag()
 }
 
 func (c *RedisClient) writeString(arg string) {
-	buffer = append(buffer, []byte("$"+strconv.Itoa(len(arg))+"\r\n"+arg+"\r\n")...)
+	c.buffer = append(c.buffer, []byte("$"+strconv.Itoa(len(arg))+"\r\n"+arg+"\r\n")...)
 }
 
 func (c *RedisClient) writeInt(arg int) {
 	byteInt := strconv.AppendInt(convertBuf[:0], int64(arg), 10)
-	writeLength(responseBlockPrefix, len(byteInt))
-	buffer = append(buffer, byteInt...)
-	writeEndFlag()
+	c.writeLength(responseBlockPrefix, len(byteInt))
+	c.buffer = append(c.buffer, byteInt...)
+	c.writeEndFlag()
 
 }
 
-func writeEndFlag() {
-	buffer = append(buffer, delimiter...)
+func (c *RedisClient)writeEndFlag() {
+	c.buffer = append(c.buffer, delimiter...)
 }
 func (c *RedisClient) writeInt64(arg int64) {
 	bytesInt := strconv.AppendInt(convertBuf[:0], arg, 10)
-	writeLength(responseBlockPrefix, len(bytesInt))
-	buffer = append(buffer, bytesInt...)
-	writeEndFlag()
+	c.writeLength(responseBlockPrefix, len(bytesInt))
+	c.buffer = append(c.buffer, bytesInt...)
+	c.writeEndFlag()
 }
 
 func (c *RedisClient) writeFloat64(arg float64) {
-	bytes := strconv.AppendFloat(buffer[:0], arg, 'g', -1, 64)
-	writeLength(responseBlockPrefix, len(bytes))
-	buffer = append(buffer, bytes...)
-	writeEndFlag()
+	bytes := strconv.AppendFloat(c.buffer[:0], arg, 'g', -1, 64)
+	c.writeLength(responseBlockPrefix, len(bytes))
+	c.buffer = append(c.buffer, bytes...)
+	c.writeEndFlag()
 }
